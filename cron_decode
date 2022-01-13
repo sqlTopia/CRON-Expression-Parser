@@ -1,0 +1,515 @@
+CREATE FUNCTION dbo.cron_decode
+(
+        @cron VARCHAR(MAX),
+        @format VARCHAR(6) = 'Quartz',
+        @fromtime DATETIME2(0),
+        @totime DATETIME2(0)
+)
+RETURNS TABLE
+AS
+RETURN  WITH cteLevel1(number)
+        AS (
+                SELECT  number
+                FROM    (
+                                VALUES  (0),
+                                        (1),
+                                        (2),
+                                        (3),
+                                        (4),
+                                        (5),
+                                        (6),
+                                        (7),
+                                        (8),
+                                        (9)
+                        ) AS d(number)
+        ), cteLevel2(number)
+        AS (
+                SELECT          0
+                FROM            cteLevel1 AS a
+                CROSS JOIN      cteLevel1 AS b
+        ), cteLevel3(number)
+        AS (
+                SELECT          0
+                FROM            cteLevel2 AS a
+                CROSS JOIN      cteLevel2 AS b
+        ), cteNumbers(number)
+        AS (
+                SELECT  ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1
+                FROM    cteLevel3
+        ), cteCron(theYear, theDayOfWeek, theMonth, theDayOfMonth, theHour, theMinute, theSecond)
+        AS (
+                SELECT  TRIM(MAX(CASE WHEN j.[key] = 6 THEN j.value ELSE '*' END)) AS theYear,
+                        CASE
+                                WHEN UPPER(@format) = 'QUARTZ' THEN TRIM(MAX(CASE WHEN j.[key] = 5 THEN REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(j.value, 'SUN', ' 1 '), 'SAT', ' 7 '), 'FRI', ' 6 '), 'THU', ' 5 '), 'WED', ' 4 '), 'TUE', ' 3 '), 'MON', ' 2 ') ELSE '' END))
+                                WHEN UPPER(@format) = 'ISO' THEN TRIM(MAX(CASE WHEN j.[key] = 5 THEN REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(j.value, 'SUN', ' 7 '), 'SAT', ' 6 '), 'FRI', ' 5 '), 'THU', ' 4 '), 'WED', ' 3 '), 'TUE', ' 2 '), 'MON', ' 1 ') ELSE '' END))
+                                WHEN UPPER(@format) = 'AT&T' THEN TRIM(MAX(CASE WHEN j.[key] = 5 THEN REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(j.value, 'SUN', ' 0 '), 'SAT', ' 6 '), 'FRI', ' 5 '), 'THU', ' 4 '), 'WED', ' 3 '), 'TUE', ' 2 '), 'MON', ' 1 ') ELSE '' END))
+                                ELSE NULL
+                        END AS theDayOfWeek,
+                        TRIM(MAX(CASE WHEN j.[key] = 4 THEN REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(j.value, 'DEC', ' 12 '), 'NOV', ' 11 '), 'OCT', ' 10 '), 'SEP', ' 9 '), 'AUG', ' 8 '), 'JUL', ' 7 '), 'JUN', ' 6 '), 'MAY', ' 5 '), 'APR', ' 4 '), 'MAR', ' 3 '), 'FEB', ' 2 '), 'JAN', ' 1 ') ELSE '' END)) AS theMonth,
+                        TRIM(MAX(CASE WHEN j.[key] = 3 THEN j.value ELSE '' END)) AS theDayOfMonth,
+                        TRIM(MAX(CASE WHEN j.[key] = 2 THEN j.value ELSE '' END)) AS theHour,
+                        TRIM(MAX(CASE WHEN j.[key] = 1 THEN j.value ELSE '' END)) AS theMinute,
+                        TRIM(MAX(CASE WHEN j.[key] = 0 THEN j.value ELSE '' END)) AS theSecond
+                FROM    OPENJSON(CONCAT('["', REPLACE(UPPER(REPLACE(REPLACE(REPLACE(@cron, ' ', '<>'), '><', ''), '<>', ' ')), ' ', '","'), '"]')) AS j
+                WHERE   @fromtime BETWEEN '1970-01-01 00:00:00' AND @totime
+                        AND @totime BETWEEN @fromtime AND '9999-12-31 23:59:59'
+        )
+        SELECT          DATENAME(WEEKDAY, DATETIME2FROMPARTS(y.myYear, m.myMonth, d.myDay, h.myHour, n.myMinute, s.mySecond, 0, 0)) AS yak,
+                        DATETIME2FROMPARTS(y.myYear, m.myMonth, d.myDay, h.myHour, n.myMinute, s.mySecond, 0, 0) AS crontime,
+                        cte.theSecond,
+                        cte.theMinute,
+                        cte.theHour,
+                        cte.theDayOfMonth,
+                        cte.theMonth,
+                        cte.theDayOfWeek,
+                        cte.theYear
+        FROM            cteCron AS cte
+        CROSS APPLY     (
+                                SELECT  y.number
+                                FROM    cteNumbers AS y
+                                WHERE   cte.theYear = '*'
+                                        AND y.number BETWEEN DATEPART(YEAR, @fromtime) AND DATEPART(YEAR, @totime)
+
+                                UNION ALL
+
+                                SELECT          y.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theYear, '/', '.'), 2), '*', '1970') AS INT) AS year_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theYear, '/', '.'), 1) AS INT) AS year_step
+                                                        WHERE   TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theYear, '/', '.'), 2), '*', '1970') AS INT) BETWEEN 1970 AND 9999
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theYear, '/', '.'), 1) AS INT) BETWEEN 1 AND 8030
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS y ON y.number BETWEEN DATEPART(YEAR, @fromtime) AND DATEPART(YEAR, @totime)
+                                                        AND (y.number - x.year_start) % x.year_step = 0
+                                WHERE           cte.theYear LIKE '*/[0-9]'
+                                                OR cte.theYear LIKE '*/[0-9][0-9]'
+                                                OR cte.theYear LIKE '*/[0-9][0-9][0-9]'
+                                                OR cte.theYear LIKE '*/[0-9][0-9][0-9][0-9]'
+                                                OR cte.theYear LIKE '[0-9][0-9][0-9][0-9]/[0-9]'
+                                                OR cte.theYear LIKE '[0-9][0-9][0-9][0-9]/[0-9][0-9]'
+                                                OR cte.theYear LIKE '[0-9][0-9][0-9][0-9]/[0-9][0-9][0-9]'
+                                                OR cte.theYear LIKE '[0-9][0-9][0-9][0-9]/[0-9][0-9][0-9][0-9]'
+
+                                UNION ALL
+
+                                SELECT DISTINCT TRY_CAST(y.value AS INT)
+                                FROM            STRING_SPLIT(cte.theYear, ',') AS y
+                                WHERE           (
+                                                        TRY_CAST(cte.theYear AS INT) BETWEEN 1970 AND 9999
+                                                        OR CHARINDEX(',', cte.theYear) >= 1
+                                                )
+                                                AND TRY_CAST(y.value AS INT) BETWEEN DATEPART(YEAR, @fromtime) AND DATEPART(YEAR, @totime)
+
+                                UNION ALL
+
+                                SELECT          y.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(PARSENAME(REPLACE(cte.theYear, '-', '.'), 2) AS INT) AS year_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theYear, '-', '.'), 1) AS INT) AS year_stop
+                                                        WHERE   TRY_CAST(PARSENAME(REPLACE(cte.theYear, '-', '.'), 2) AS INT) BETWEEN 1970 AND TRY_CAST(PARSENAME(REPLACE(cte.theYear, '-', '.'), 1) AS INT)
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theYear, '-', '.'), 1) AS INT) BETWEEN TRY_CAST(PARSENAME(REPLACE(cte.theYear, '-', '.'), 2) AS INT) AND 9999
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS y ON y.number BETWEEN DATEPART(YEAR, @fromtime) AND DATEPART(YEAR, @totime)
+                                                        AND y.number BETWEEN x.year_start AND x.year_stop
+                                WHERE           cte.theYear LIKE '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+                        ) AS y(myYear)
+        CROSS APPLY     (
+                                SELECT  m.number,
+                                        CASE
+                                                WHEN m.number IN (1, 3, 5, 7, 8, 10, 12) THEN 31
+                                                WHEN m.number IN (4, 6, 9, 11) THEN 30
+                                                ELSE 28 + ISDATE(CONCAT(y.myYear, '-02-29'))
+                                        END
+                                FROM    cteNumbers AS m
+                                WHERE   cte.theMonth = '*'
+                                        AND m.number BETWEEN 1 AND 12
+                                        
+                                UNION ALL
+                                                
+                                SELECT          m.number,
+                                                CASE
+                                                        WHEN m.number IN (1, 3, 5, 7, 8, 10, 12) THEN 31
+                                                        WHEN m.number IN (4, 6, 9, 11) THEN 30
+                                                        ELSE 28 + ISDATE(CONCAT(y.myYear, '-02-29'))
+                                                END
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theMonth, '/', '.'), 2), '*', '1') AS INT) AS month_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '/', '.'), 1) AS INT) AS month_step
+                                                        WHERE   TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theMonth, '/', '.'), 2), '*', '1') AS INT) BETWEEN 1 AND 12
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '/', '.'), 1) AS INT) BETWEEN 1 AND 12
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS m ON m.number BETWEEN 1 AND 12
+                                                        AND (m.number - x.month_start) % x.month_step = 0
+                                WHERE           cte.theMonth LIKE '*/[0-9]'
+                                                OR cte.theMonth LIKE '*/[0-9][0-9]'
+                                                OR cte.theMonth LIKE '[0-9]/[0-9]'
+                                                OR cte.theMonth LIKE '[0-9]/[0-9][0-9]'
+                                                OR cte.theMonth LIKE '[0-9][0-9]/[0-9][0-9]'
+
+                                UNION ALL
+
+                                SELECT DISTINCT TRY_CAST(m.value AS INT),
+                                                CASE
+                                                        WHEN TRY_CAST(m.value AS INT) IN (1, 3, 5, 7, 8, 10, 12) THEN 31
+                                                        WHEN TRY_CAST(m.value AS INT) IN (4, 6, 9, 11) THEN 30
+                                                        ELSE 28 + ISDATE(CONCAT(y.myYear, '-02-29'))
+                                                END
+                                FROM            STRING_SPLIT(cte.theMonth, ',') AS m
+                                WHERE           (
+                                                        TRY_CAST(cte.theMonth AS INT) BETWEEN 1 AND 12
+                                                        OR CHARINDEX(',', cte.theMonth) >= 1
+                                                )
+                                                AND TRY_CAST(m.value AS INT) BETWEEN 1 AND 12
+
+                                UNION ALL
+
+                                SELECT          m.number,
+                                                CASE
+                                                        WHEN m.number IN (1, 3, 5, 7, 8, 10, 12) THEN 31
+                                                        WHEN m.number IN (4, 6, 9, 11) THEN 30
+                                                        ELSE 28 + ISDATE(CONCAT(y.myYear, '-02-29'))
+                                                END
+                                FROM            (
+                                                        SELECT  TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '-', '.'), 2) AS INT) AS month_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '-', '.'), 1) AS INT) AS month_stop
+                                                        WHERE   TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '-', '.'), 2) AS INT) BETWEEN 1 AND TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '-', '.'), 1) AS INT)
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '-', '.'), 1) AS INT) BETWEEN TRY_CAST(PARSENAME(REPLACE(cte.theMonth, '-', '.'), 2) AS INT) AND 12
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS m ON m.number BETWEEN 1 AND 12
+                                                        AND m.number BETWEEN x.month_start AND x.month_stop
+                                WHERE           cte.theMonth LIKE '[0-9]-[0-9]'
+                                                OR cte.theMonth LIKE '[0-9]-[0-9][0-9]'
+                                                OR cte.theMonth LIKE '[0-9][0-9]-[0-9][0-9]'
+                        ) AS m(myMonth, myMonthDays)
+        OUTER APPLY     (
+                                SELECT  d.number
+                                FROM    cteNumbers AS d
+                                WHERE   cte.theDayOfWeek = '*'
+                                        AND cte.theDayOfMonth = '?'
+                                        AND d.number BETWEEN 1 AND m.myMonthDays
+
+                                UNION ALL
+
+                                SELECT          d.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theDayOfWeek, '/', '.'), 2), '*', '1') AS INT) AS week_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theDayOfWeek, '/', '.'), 1) AS INT) AS week_step
+                                                        WHERE   (
+                                                                        UPPER(@format) = 'QUARTZ' AND TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theDayOfWeek, '/', '.'), 2), '*', '1') AS INT) BETWEEN 1 AND 7
+                                                                        OR UPPER(@format) = 'ISO' AND TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theDayOfWeek, '/', '.'), 2), '*', '1') AS INT) BETWEEN 1 AND 7
+                                                                        OR UPPER(@format) = 'AT&T' AND TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theDayOfWeek, '/', '.'), 2), '*', '0') AS INT) BETWEEN 0 AND 6
+                                                                )
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theDayOfWeek, '/', '.'), 1) AS INT) BETWEEN 1 AND 7
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS d ON d.number BETWEEN 1 AND m.myMonthDays
+                                                        AND 1 = CASE
+                                                                        WHEN UPPER(@format) = 'QUARTZ' AND (1 + DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 - x.week_start) % x.week_step = 0 THEN 1
+                                                                        WHEN UPPER(@format) = 'ISO' AND (1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 - x.week_start) % x.week_step = 0 THEN 1
+                                                                        WHEN UPPER(@format) = 'AT&T' AND (DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 - x.week_start) % x.week_step = 0 THEN 1
+                                                                        ELSE 0
+                                                                END
+                                WHERE           (
+                                                        cte.theDayOfWeek LIKE '*/[0-9]'
+                                                        OR cte.theDayOfWeek LIKE '[0-9]/[0-9]'
+                                                )
+                                                AND cte.theDayOfMonth = '?'
+
+                                UNION ALL
+
+                                SELECT          d.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theDayOfMonth, '/', '.'), 2), '*', '1') AS INT) AS month_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theDayOfMonth, '/', '.'), 1) AS INT) AS month_step
+                                                        WHERE   TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theDayOfMonth, '/', '.'), 2), '*', '1') AS INT) BETWEEN 1 AND 31
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theDayOfMonth, '/', '.'), 1) AS INT) BETWEEN 1 AND 31
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS d ON d.number BETWEEN 1 AND m.myMonthDays
+                                                        AND (d.number - x.month_start) % x.month_step = 0
+                                WHERE           (
+                                                        cte.theDayOfMonth LIKE '*/[0-9]'
+                                                        OR cte.theDayOfMonth LIKE '*/[0-9][0-9]'
+                                                        OR cte.theDayOfMonth LIKE '[0-9]/[0-9]'
+                                                        OR cte.theDayOfMonth LIKE '[0-9]/[0-9][0-9]'
+                                                        OR cte.theDayOfMonth LIKE '[0-9][0-9]/[0-9][0-9]'
+                                                )
+                                                AND cte.theDayOfWeek = '?'
+
+                                UNION ALL
+
+                                SELECT DISTINCT d.number
+                                FROM            STRING_SPLIT(cte.theDayOfWeek, ',') AS x
+                                INNER JOIN      cteNumbers AS d ON d.number BETWEEN 1 AND m.myMonthDays
+                                                        AND 1 = CASE
+                                                                        WHEN UPPER(@format) = 'QUARTZ' AND 1 + DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = TRY_CAST(x.value AS INT) THEN 1
+                                                                        WHEN UPPER(@format) = 'ISO' AND 1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = TRY_CAST(x.value AS INT) THEN 1
+                                                                        WHEN UPPER(@format) = 'AT&T' AND DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = TRY_CAST(x.value AS INT) THEN 1
+                                                                        ELSE 0
+                                                                END
+                                WHERE           (
+                                                        UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7]'
+                                                        OR UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7] , [1-7] , [1-7] , [1-7] , [1-7] , [1-7] , [1-7]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6] , [0-6]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6] , [0-6] , [0-6]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6] , [0-6] , [0-6] , [0-6]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6] , [0-6] , [0-6] , [0-6] , [0-6]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6] , [0-6] , [0-6] , [0-6] , [0-6] , [0-6]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6] , [0-6] , [0-6] , [0-6] , [0-6] , [0-6] , [0-6]'
+                                                )
+                                                AND cte.theDayOfMonth = '?'
+
+                                UNION ALL
+
+                                SELECT DISTINCT TRY_CAST(d.value AS INT)
+                                FROM            STRING_SPLIT(cte.theDayOfMonth, ',') AS d
+                                WHERE           (
+                                                        TRY_CAST(cte.theDayOfMonth AS INT) BETWEEN 1 AND m.myMonthDays
+                                                        OR CHARINDEX(',', cte.theDayOfMonth) >= 1
+                                                )
+                                                AND cte.theDayOfWeek = '?'
+                                                AND TRY_CAST(d.value AS INT) BETWEEN 1 AND m.myMonthDays
+
+                                UNION ALL
+
+                                SELECT  m.myMonthDays
+                                WHERE   cte.theDayOfMonth = 'L'
+                                        AND cte.theDayOfWeek = '?'
+
+                                UNION ALL
+
+                                SELECT  MAX(d.number)
+                                FROM    cteNumbers AS d
+                                WHERE   cte.theDayOfMonth = 'LW'
+                                        AND cte.theDayOfWeek = '?'
+                                        AND d.number BETWEEN m.myMonthDays - 2 AND m.myMonthDays
+                                        AND DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 BETWEEN 0 AND 4
+
+                                UNION ALL
+
+                                SELECT          MAX(d.number)
+                                FROM            (
+                                                        SELECT  CAST(SUBSTRING(cte.theDayOfWeek, 1, 1) AS INT) AS day_of_week
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS d ON d.number BETWEEN m.myMonthDays - 6 AND m.myMonthDays
+                                                        AND 1 = CASE
+                                                                        WHEN UPPER(@format) = 'QUARTZ' AND 1 + DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = x.day_of_week THEN 1
+                                                                        WHEN UPPER(@format) = 'ISO' AND 1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = x.day_of_week THEN 1
+                                                                        WHEN UPPER(@format) = 'AT&T' AND DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = x.day_of_week THEN 1
+                                                                        ELSE 0
+                                                                END
+                                WHERE           (
+                                                        UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7]L'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7]L'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6]L'
+                                                )
+                                                AND cte.theDayOfMonth = '?'
+
+                                UNION ALL
+
+                                SELECT  m.myMonthDays - x.offset
+                                FROM    (
+                                                SELECT  TRY_CAST(SUBSTRING(cte.theDayOfMonth, 3, 2) AS INT) AS offset
+                                                WHERE   TRY_CAST(SUBSTRING(cte.theDayOfMonth, 3, 2) AS INT) BETWEEN 1 AND 31
+                                        ) AS x
+                                WHERE   (
+                                                cte.theDayOfMonth LIKE 'L-[0-9]'
+                                                OR cte.theDayOfMonth LIKE 'L-[0-9][0-9]'
+                                        )
+                                        AND cte.theDayOfWeek = '?'
+
+                                UNION ALL               -- Nearest weekday
+
+                                SELECT  w.number
+                                FROM    (
+                                                SELECT TOP(1)   d.number
+                                                FROM            cteNumbers AS d
+                                                WHERE           (
+                                                                        cte.theDayOfMonth LIKE '[0-9]W'
+                                                                        OR cte.theDayOfMonth LIKE '[0-9][0-9]W'
+                                                                )
+                                                                AND cte.theDayOfWeek = '?'
+                                                                AND d.number BETWEEN TRY_CAST(REPLACE(cte.theDayOfMonth, 'W', '') AS INT) - 2 AND TRY_CAST(REPLACE(cte.theDayOfMonth, 'W', '') AS INT) + 2
+                                                                AND DATEDIFF(DAY, '19000101', DATEADD(DAY, d.number - 1, DATEFROMPARTS(y.myYear, m.myMonth, 1))) % 7 <= 4
+                                                ORDER BY        ABS(TRY_CAST(REPLACE(cte.theDayOfMonth, 'W', '') AS INT) - d.number)
+                                        ) AS w
+                                WHERE   w.number BETWEEN 1 AND m.myMonthDays
+
+                                UNION ALL
+
+                                SELECT          d.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(SUBSTRING(cte.theDayOfWeek, 1, 1) AS TINYINT) AS day_of_week,
+                                                                TRY_CAST(SUBSTRING(cte.theDayOfWeek, 3, 1) AS TINYINT) AS nth
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS d ON d.number BETWEEN 7 * x.nth - 6 AND 7 * x.nth
+                                                        AND 1 = CASE
+                                                                        WHEN UPPER(@format) = 'QUARTZ' AND 1 + DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = x.day_of_week THEN 1
+                                                                        WHEN UPPER(@format) = 'ISO' AND 1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = x.day_of_week THEN 1
+                                                                        WHEN UPPER(@format) = 'AT&T' AND DATEDIFF(DAY, '18991231', DATEFROMPARTS(y.myYear, m.myMonth, d.number)) % 7 = x.day_of_week THEN 1
+                                                                        ELSE 0
+                                                                END
+                                WHERE           (
+                                                        UPPER(@format) = 'QUARTZ' AND cte.theDayOfWeek LIKE '[1-7]#[1-5]'
+                                                        OR UPPER(@format) = 'ISO' AND cte.theDayOfWeek LIKE '[1-7]#[1-5]'
+                                                        OR UPPER(@format) = 'AT&T' AND cte.theDayOfWeek LIKE '[0-6]#[1-5]'
+                                                )
+                                                AND cte.theDayOfMonth = '?'
+                        ) AS d(myDay)
+        CROSS APPLY     (
+                                SELECT  h.number
+                                FROM    cteNumbers AS h
+                                WHERE   cte.theHour = '*'
+                                        AND h.number BETWEEN 0 AND 23
+
+                                UNION ALL
+                                                
+                                SELECT          h.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theHour, '/', '.'), 2), '*', '1') AS INT) AS hour_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theHour, '/', '.'), 1) AS INT) AS hour_step
+                                                        WHERE   TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theHour, '/', '.'), 2), '*', '1') AS INT) BETWEEN 0 AND 23
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theHour, '/', '.'), 1) AS INT) BETWEEN 1 AND 24
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS h ON h.number BETWEEN 0 AND 23
+                                                        AND (h.number - x.hour_start) % x.hour_step = 0
+                                WHERE           cte.theHour LIKE '*/[0-9]'
+                                                OR cte.theHour LIKE '*/[0-9][0-9]'
+                                                OR cte.theHour LIKE '[0-9]/[0-9]'
+                                                OR cte.theHour LIKE '[0-9]/[0-9][0-9]'
+                                                OR cte.theHour LIKE '[0-9][0-9]/[0-9][0-9]'
+
+                                UNION ALL
+
+                                SELECT DISTINCT TRY_CAST(h.value AS INT)
+                                FROM            STRING_SPLIT(cte.theHour, ',') AS h
+                                WHERE           (
+                                                        TRY_CAST(cte.theHour AS INT) BETWEEN 0 AND 23
+                                                        OR CHARINDEX(',', cte.theHour) >= 1
+                                                )
+                                                AND TRY_CAST(h.value AS INT) BETWEEN 0 AND 23
+
+                                UNION ALL
+
+                                SELECT          h.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(PARSENAME(REPLACE(cte.theHour, '-', '.'), 2) AS INT) AS hour_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theHour, '-', '.'), 1) AS INT) AS hour_stop
+                                                        WHERE   TRY_CAST(PARSENAME(REPLACE(cte.theHour, '-', '.'), 2) AS INT) BETWEEN 0 AND TRY_CAST(PARSENAME(REPLACE(cte.theHour, '-', '.'), 1) AS INT)
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theHour, '-', '.'), 1) AS INT) BETWEEN TRY_CAST(PARSENAME(REPLACE(cte.theHour, '-', '.'), 2) AS INT) AND 23
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS h ON h.number BETWEEN 0 AND 23
+                                                        AND h.number BETWEEN x.hour_start AND x.hour_stop
+                                WHERE           cte.theHour LIKE '[0-9]-[0-9]'
+                                                OR cte.theHour LIKE '[0-9]-[0-9][0-9]'
+                                                OR cte.theHour LIKE '[0-9][0-9]-[0-9][0-9]'
+                        ) AS h(myHour)
+        CROSS APPLY     (
+                                SELECT  n.number
+                                FROM    cteNumbers AS n
+                                WHERE   cte.theMinute = '*'
+                                        AND n.number BETWEEN 0 AND 59
+
+                                UNION ALL
+                                                
+                                SELECT          n.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theMinute, '/', '.'), 2), '*', '1') AS INT) AS minute_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '/', '.'), 1) AS INT) AS minute_step
+                                                        WHERE   TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theMinute, '/', '.'), 2), '*', '1') AS INT) BETWEEN 0 AND 59
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '/', '.'), 1) AS INT) BETWEEN 1 AND 60
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS n ON n.number BETWEEN 0 AND 59
+                                                        AND (n.number - x.minute_start) % x.minute_step = 0
+                                WHERE           cte.theMinute LIKE '*/[0-9]'
+                                                OR cte.theMinute LIKE '*/[0-9][0-9]'
+                                                OR cte.theMinute LIKE '[0-9]/[0-9]'
+                                                OR cte.theMinute LIKE '[0-9]/[0-9][0-9]'
+                                                OR cte.theMinute LIKE '[0-9][0-9]/[0-9][0-9]'
+
+                                UNION ALL
+
+                                SELECT DISTINCT TRY_CAST(n.value AS INT)
+                                FROM            STRING_SPLIT(cte.theMinute, ',') AS n
+                                WHERE           (
+                                                        TRY_CAST(cte.theMinute AS INT) BETWEEN 0 AND 59
+                                                        OR CHARINDEX(',', cte.theMinute) >= 1
+                                                )
+                                                AND TRY_CAST(n.value AS INT) BETWEEN 0 AND 59
+
+                                UNION ALL
+
+                                SELECT          n.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '-', '.'), 2) AS INT) AS minute_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '-', '.'), 1) AS INT) AS minute_stop
+                                                        WHERE   TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '-', '.'), 2) AS INT) BETWEEN 0 AND TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '-', '.'), 1) AS INT)
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '-', '.'), 1) AS INT) BETWEEN TRY_CAST(PARSENAME(REPLACE(cte.theMinute, '-', '.'), 2) AS INT) AND 59
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS n ON n.number BETWEEN 0 AND 59
+                                                        AND n.number BETWEEN x.minute_start AND x.minute_stop
+                                WHERE           cte.theMinute LIKE '[0-9]-[0-9]'
+                                                OR cte.theMinute LIKE '[0-9]-[0-9][0-9]'
+                                                OR cte.theMinute LIKE '[0-9][0-9]-[0-9][0-9]'
+                        ) AS n(myMinute)
+        CROSS APPLY     (
+                                SELECT  s.number
+                                FROM    cteNumbers AS s
+                                WHERE   cte.theSecond = '*'
+                                        AND s.number BETWEEN 0 AND 59
+
+                                UNION ALL
+                                                
+                                SELECT          s.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theSecond, '/', '.'), 2), '*', '1') AS INT) AS second_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '/', '.'), 1) AS INT) AS second_step
+                                                        WHERE   TRY_CAST(REPLACE(PARSENAME(REPLACE(cte.theSecond, '/', '.'), 2), '*', '1') AS INT) BETWEEN 0 AND 59
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '/', '.'), 1) AS INT) BETWEEN 1 AND 60
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS s ON s.number BETWEEN 0 AND 59
+                                                        AND (s.number - x.second_start) % x.second_step = 0
+                                WHERE           cte.theSecond LIKE '*/[0-9]'
+                                                OR cte.theSecond LIKE '*/[0-9][0-9]'
+                                                OR cte.theSecond LIKE '[0-9]/[0-9]'
+                                                OR cte.theSecond LIKE '[0-9]/[0-9][0-9]'
+                                                OR cte.theSecond LIKE '[0-9][0-9]/[0-9][0-9]'
+
+                                UNION ALL
+
+                                SELECT DISTINCT TRY_CAST(s.value AS INT)
+                                FROM            STRING_SPLIT(cte.theSecond, ',') AS s
+                                WHERE           (
+                                                        TRY_CAST(cte.theSecond AS INT) BETWEEN 0 AND 59
+                                                        OR CHARINDEX(',', cte.theSecond) >= 1
+                                                )
+                                                AND TRY_CAST(s.value AS INT) BETWEEN 0 AND 59
+
+                                UNION ALL
+
+                                SELECT          s.number
+                                FROM            (
+                                                        SELECT  TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '-', '.'), 2) AS INT) AS second_start,
+                                                                TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '-', '.'), 1) AS INT) AS second_stop
+                                                        WHERE   TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '-', '.'), 2) AS INT) BETWEEN 0 AND TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '-', '.'), 1) AS INT)
+                                                                AND TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '-', '.'), 1) AS INT) BETWEEN TRY_CAST(PARSENAME(REPLACE(cte.theSecond, '-', '.'), 2) AS INT) AND 59
+                                                ) AS x
+                                INNER JOIN      cteNumbers AS s ON s.number BETWEEN 0 AND 59
+                                                        AND s.number BETWEEN x.second_start AND x.second_stop
+                                WHERE           cte.theSecond LIKE '[0-9]-[0-9]'
+                                                OR cte.theSecond LIKE '[0-9]-[0-9][0-9]'
+                                                OR cte.theSecond LIKE '[0-9][0-9]-[0-9][0-9]'
+                        ) AS s(mySecond)
+        WHERE           DATETIME2FROMPARTS(y.myYear, m.myMonth, d.myDay, h.myHour, n.myMinute, s.mySecond, 0, 0) BETWEEN @fromtime AND @totime;
+GO
