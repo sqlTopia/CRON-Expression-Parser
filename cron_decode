@@ -1,4 +1,4 @@
-CREATE FUNCTION dbo.cron_decode_fn
+CREATE FUNCTION dbo.cron_decode
 (
         @cron VARCHAR(MAX),
         @format CHAR(10) = '2345671SUN',
@@ -51,7 +51,7 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
         )
         SELECT          DATETIME2FROMPARTS(y.number, m.number, d.number, h.number, n.number, s.number, 0, 0) AS crontime
         FROM            cteCron AS cte
-        CROSS APPLY     dbo.cron_decode_expression_fn(cte.theYear, 1970, 9999, 1970, DATEPART(YEAR, @fromtime), DATEPART(YEAR, @totime)) AS y
+        CROSS APPLY     dbo.decode_range_expression(cte.theYear, 1970, 9999, 1970, DATEPART(YEAR, @fromtime), DATEPART(YEAR, @totime)) AS y
         CROSS APPLY     (
                                 SELECT  w.number,
                                         CASE
@@ -59,41 +59,41 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                                 WHEN w.number IN (4, 6, 9, 11) THEN 30
                                                 ELSE 28 + ISDATE(CONCAT(y.number, '-02-29'))
                                         END AS myMonthDays
-                                FROM    dbo.cron_decode_expression_fn(cte.theMonth, 1, 12, 1, 1, 12) AS w
+                                FROM    dbo.decode_range_expression(cte.theMonth, 1, 12, 1, 1, 12) AS w
                         ) AS m
-        CROSS APPLY     dbo.cron_decode_expression_fn(cte.theHour, 0, 23, 0, 0, 23) AS h
-        CROSS APPLY     dbo.cron_decode_expression_fn(cte.theMinute, 0, 59, 0, 0, 59) AS n
-        CROSS APPLY     dbo.cron_decode_expression_fn(cte.theSecond, 0, 59, 0, 0, 59) AS s
+        CROSS APPLY     dbo.decode_range_expression(cte.theHour, 0, 23, 0, 0, 23) AS h
+        CROSS APPLY     dbo.decode_range_expression(cte.theMinute, 0, 59, 0, 0, 59) AS n
+        CROSS APPLY     dbo.decode_range_expression(cte.theSecond, 0, 59, 0, 0, 59) AS s
         CROSS APPLY     (
-                                SELECT  w.number,1
-                                FROM    dbo.cron_decode_expression_fn(cte.theDayOfWeek, 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
+                                SELECT  w.number
+                                FROM    dbo.decode_range_expression(cte.theDayOfWeek, 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
                                 WHERE   cte.theDayOfMonth = '?'
                                         AND cte.theDayOfWeek = '*'
 
                                 UNION ALL
 
-                                SELECT          w.number,2
+                                SELECT          w.number
                                 FROM            (
                                                         SELECT  CHARINDEX(SUBSTRING(cte.theRollingWeek, w.number, 1), SUBSTRING(@format, 1, 7)) AS offset
-                                                        FROM    dbo.cron_decode_expression_fn(cte.theDayOfWeek, 0, 7, cte.theDefaultDayOfWeek, 1, 7) AS w
+                                                        FROM    dbo.decode_range_expression(cte.theDayOfWeek, 0, 7, cte.theDefaultDayOfWeek, 1, 7) AS w
                                                         WHERE   cte.theDayOfMonth = '?'
                                                                 AND cte.theDayOfWeek LIKE '%[-/,0123456789]%'
                                                                 AND cte.theDayOfWeek NOT LIKE '%[#L*]%'
                                                 ) AS src
-                                CROSS APPLY     dbo.cron_decode_expression_fn('*', 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
+                                CROSS APPLY     dbo.decode_range_expression('*', 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
                                 WHERE           1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 = src.offset
 
                                 UNION ALL
 
-                                SELECT  w.number,3
-                                FROM    dbo.cron_decode_expression_fn(cte.theDayOfMonth, 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
+                                SELECT  w.number
+                                FROM    dbo.decode_range_expression(cte.theDayOfMonth, 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
                                 WHERE   cte.theDayOfMonth LIKE '%[-/,0123456789]%'
                                         AND cte.theDayOfMonth NOT LIKE '%[WL*]%'
                                         AND cte.theDayOfWeek = '?'
 
                                 UNION ALL
 
-                                SELECT          w.number,4
+                                SELECT          w.number
                                 FROM            (
                                                         SELECT  TRY_CAST(SUBSTRING(cte.theDayOfMonth, 3, 2) AS INT) AS offset
                                                         WHERE   TRY_CAST(SUBSTRING(cte.theDayOfMonth, 3, 2) AS INT) BETWEEN 0 AND 30
@@ -103,18 +103,18 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                                                                 OR cte.theDayOfMonth LIKE 'L-[0-9][0-9]'
                                                                         )
                                                 ) AS src
-                                CROSS APPLY     dbo.cron_decode_expression_fn(m.myMonthDays - src.offset, m.myMonthDays - src.offset, m.myMonthDays - src.offset, 1, 1, m.myMonthDays) AS w
+                                CROSS APPLY     dbo.decode_range_expression(m.myMonthDays - src.offset, m.myMonthDays - src.offset, m.myMonthDays - src.offset, 1, 1, m.myMonthDays) AS w
 
                                 UNION ALL
 
-                                SELECT  m.myMonthDays,5
+                                SELECT  m.myMonthDays
                                 WHERE   cte.theDayOfMonth = 'L'
                                         AND cte.theDayOfWeek = '?'
 
                                 UNION ALL
 
-                                SELECT  MAX(w.number),6
-                                FROM    dbo.cron_decode_expression_fn('*', m.myMonthDays - 2, m.myMonthDays, m.myMonthDays - 2, m.myMonthDays - 2, m.myMonthDays) AS w
+                                SELECT  MAX(w.number)
+                                FROM    dbo.decode_range_expression('*', m.myMonthDays - 2, m.myMonthDays, m.myMonthDays - 2, m.myMonthDays - 2, m.myMonthDays) AS w
                                 WHERE   cte.theDayOfMonth = 'LW'
                                         AND cte.theDayOfWeek = '?'
                                         AND DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 <= 4
@@ -122,33 +122,33 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
 
                                 UNION ALL
 
-                                SELECT          MAX(w.number),7
+                                SELECT          MAX(w.number)
                                 FROM            (
                                                         SELECT  CHARINDEX(CAST(TRY_CAST(SUBSTRING(cte.theDayOfWeek, 1, 1) AS INT) AS CHAR(1)), SUBSTRING(@format, 1, 7)) AS day_of_week
                                                         WHERE   CHARINDEX(CAST(TRY_CAST(SUBSTRING(cte.theDayOfWeek, 1, 1) AS INT) AS CHAR(1)), SUBSTRING(@format, 1, 7)) BETWEEN 1 AND 7
                                                                 AND cte.theDayOfWeek LIKE '[0-9]L'
                                                                 AND cte.theDayOfMonth = '?'
                                                 ) AS src
-                                CROSS APPLY     dbo.cron_decode_expression_fn('*', m.myMonthDays - 6, m.myMonthDays, m.myMonthDays - 6, m.myMonthDays - 6, m.myMonthDays) AS w
+                                CROSS APPLY     dbo.decode_range_expression('*', m.myMonthDays - 6, m.myMonthDays, m.myMonthDays - 6, m.myMonthDays - 6, m.myMonthDays) AS w
                                 WHERE           1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 = src.day_of_week
                                 HAVING          MAX(w.number) IS NOT NULL
 
                                 UNION ALL
 
-                                SELECT TOP(1)   w.number,8
+                                SELECT TOP(1)   w.number
                                 FROM            (
                                                         SELECT  TRY_CAST(REPLACE(cte.theDayOfMonth, 'W', '') AS INT) AS offset
                                                         WHERE   TRY_CAST(REPLACE(cte.theDayOfMonth, 'W', '') AS INT) BETWEEN 1 AND 31
                                                                 AND cte.theDayOfWeek = '?'
                                                                 AND cte.theDayOfMonth LIKE '%W'
                                                 ) AS src
-                                CROSS APPLY     dbo.cron_decode_expression_fn('*', src.offset - 1, src.offset + 1, src.offset - 1, 1, m.myMonthDays) AS w
+                                CROSS APPLY     dbo.decode_range_expression('*', src.offset - 1, src.offset + 1, src.offset - 1, 1, m.myMonthDays) AS w
                                 WHERE           DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 <= 4
                                 ORDER BY        ABS(src.offset - w.number)
                                 
                                 UNION ALL
 
-                                SELECT          w.number,9
+                                SELECT          w.number
                                 FROM            (
                                                         SELECT  CHARINDEX(CAST(TRY_CAST(SUBSTRING(cte.theDayOfWeek, 1, 1) AS INT) AS CHAR(1)), SUBSTRING(@format, 1, 7)) AS day_of_week,
                                                                 TRY_CAST(SUBSTRING(cte.theDayOfWeek, 3, 1) AS TINYINT) AS nth
@@ -157,7 +157,7 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                                                 AND cte.theDayOfWeek LIKE '[0-7]#[1-5]'
                                                                 AND cte.theDayOfMonth = '?'
                                                 ) AS src
-                                CROSS APPLY     dbo.cron_decode_expression_fn('*', 7 * src.nth - 6, 7 * src.nth, 7 * src.nth - 6, 1, m.myMonthDays) AS w
+                                CROSS APPLY     dbo.decode_range_expression('*', 7 * src.nth - 6, 7 * src.nth, 7 * src.nth - 6, 1, m.myMonthDays) AS w
                                 WHERE           1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 = src.day_of_week
                         ) AS d(number, yak)
         WHERE           cte.theSecond > ''
