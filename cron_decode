@@ -27,13 +27,13 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                 ELSE ''
                         END AS theDefaultDayOfWeek,
                         CASE
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'MON' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'TUE' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 2, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'WED' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 3, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'THU' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 4, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'FRI' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 5, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SAT' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 6, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SUN' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 7), 7, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'MON' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 1), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'TUE' THEN SUBSTRING(SUBSTRING(@format, 2, 7) + SUBSTRING(@format, 1, 2), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'WED' THEN SUBSTRING(SUBSTRING(@format, 3, 7) + SUBSTRING(@format, 1, 3), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'THU' THEN SUBSTRING(SUBSTRING(@format, 4, 7) + SUBSTRING(@format, 1, 4), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'FRI' THEN SUBSTRING(SUBSTRING(@format, 5, 7) + SUBSTRING(@format, 1, 5), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SAT' THEN SUBSTRING(SUBSTRING(@format, 6, 7) + SUBSTRING(@format, 1, 6), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SUN' THEN SUBSTRING(SUBSTRING(@format, 7, 7) + SUBSTRING(@format, 1, 7), 1, 7)
                                 ELSE ''
                         END AS theRollingWeek
                 FROM    OPENJSON(CONCAT('["', REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@cron)), ' ', '<>'), '><', ''), '<>', ' '), ' ', '","'), '"]')) AS src
