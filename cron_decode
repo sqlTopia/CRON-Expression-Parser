@@ -1,4 +1,4 @@
-CREATE FUNCTION dbo.cron_decode
+CREATE FUNCTION cron_decode_fn
 (
         @cron VARCHAR(MAX),
         @format CHAR(10) = '2345671SUN',
@@ -28,12 +28,12 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                         END AS theDefaultDayOfWeek,
                         CASE
                                 WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'MON' THEN SUBSTRING(SUBSTRING(@format, 1, 7) + SUBSTRING(@format, 1, 1), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'TUE' THEN SUBSTRING(SUBSTRING(@format, 2, 6) + SUBSTRING(@format, 1, 2), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'WED' THEN SUBSTRING(SUBSTRING(@format, 3, 5) + SUBSTRING(@format, 1, 3), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'THU' THEN SUBSTRING(SUBSTRING(@format, 4, 4) + SUBSTRING(@format, 1, 4), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'FRI' THEN SUBSTRING(SUBSTRING(@format, 5, 3) + SUBSTRING(@format, 1, 5), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SAT' THEN SUBSTRING(SUBSTRING(@format, 6, 2) + SUBSTRING(@format, 1, 6), 1, 7)
-                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SUN' THEN SUBSTRING(SUBSTRING(@format, 7, 1) + SUBSTRING(@format, 1, 7), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'TUE' THEN SUBSTRING(SUBSTRING(@format, 2, 7) + SUBSTRING(@format, 1, 2), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'WED' THEN SUBSTRING(SUBSTRING(@format, 3, 7) + SUBSTRING(@format, 1, 3), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'THU' THEN SUBSTRING(SUBSTRING(@format, 4, 7) + SUBSTRING(@format, 1, 4), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'FRI' THEN SUBSTRING(SUBSTRING(@format, 5, 7) + SUBSTRING(@format, 1, 5), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SAT' THEN SUBSTRING(SUBSTRING(@format, 6, 7) + SUBSTRING(@format, 1, 6), 1, 7)
+                                WHEN UPPER(SUBSTRING(@format, 8, 3)) = 'SUN' THEN SUBSTRING(SUBSTRING(@format, 7, 7) + SUBSTRING(@format, 1, 7), 1, 7)
                                 ELSE ''
                         END AS theRollingWeek
                 FROM    OPENJSON(CONCAT('["', REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@cron)), ' ', '<>'), '><', ''), '<>', ' '), ' ', '","'), '"]')) AS src
@@ -59,23 +59,23 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                                 WHEN w.number IN (4, 6, 9, 11) THEN 30
                                                 ELSE 28 + ISDATE(CONCAT(y.number, '-02-29'))
                                         END AS myMonthDays
-                                FROM    dbo.decode_range_expression(cte.theMonth, 1, 12, 1, 1, 12) AS w
+                                FROM    dbo.cron_decode_expression_fn(cte.theMonth, 1, 12, 1, 1, 12) AS w
                         ) AS m
         CROSS APPLY     dbo.decode_range_expression(cte.theHour, 0, 23, 0, 0, 23) AS h
         CROSS APPLY     dbo.decode_range_expression(cte.theMinute, 0, 59, 0, 0, 59) AS n
         CROSS APPLY     dbo.decode_range_expression(cte.theSecond, 0, 59, 0, 0, 59) AS s
         CROSS APPLY     (
                                 SELECT  w.number
-                                FROM    dbo.decode_range_expression(cte.theDayOfWeek, 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
-                                WHERE   cte.theDayOfMonth = '?'
-                                        AND cte.theDayOfWeek = '*'
+                                FROM    dbo.decode_range_expression('*', 1, m.myMonthDays, 1, 1, m.myMonthDays) AS w
+                                WHERE   cte.theDayOfMonth = '?' AND cte.theDayOfWeek = '*'
+                                        OR cte.theDayOfMonth = '*' AND cte.theDayOfWeek = '?'
 
                                 UNION ALL
 
                                 SELECT          w.number
                                 FROM            (
                                                         SELECT  CHARINDEX(SUBSTRING(cte.theRollingWeek, w.number, 1), SUBSTRING(@format, 1, 7)) AS offset
-                                                        FROM    dbo.decode_range_expression(cte.theDayOfWeek, 0, 7, cte.theDefaultDayOfWeek, 1, 7) AS w
+                                                        FROM    dbo.cron_decode_expression_fn(cte.theDayOfWeek, 0, 7, cte.theDefaultDayOfWeek, 1, 7) AS w
                                                         WHERE   cte.theDayOfMonth = '?'
                                                                 AND cte.theDayOfWeek LIKE '%[-/,0123456789]%'
                                                                 AND cte.theDayOfWeek NOT LIKE '%[#L*]%'
@@ -160,7 +160,8 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                 CROSS APPLY     dbo.decode_range_expression('*', 7 * src.nth - 6, 7 * src.nth, 7 * src.nth - 6, 1, m.myMonthDays) AS w
                                 WHERE           1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 = src.day_of_week
                         ) AS d(number)
-        WHERE           cte.theSecond > ''
+        WHERE           DATETIME2FROMPARTS(y.number, m.number, d.number, h.number, n.number, s.number, 0, 0) BETWEEN @fromtime AND @totime
+                        AND cte.theSecond > ''
                         AND cte.theMinute > ''
                         AND cte.theHour > ''
                         AND cte.theDayOfMonth > ''
