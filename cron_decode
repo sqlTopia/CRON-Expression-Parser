@@ -1,4 +1,4 @@
-CREATE FUNCTION cron_decode_fn
+CREATE FUNCTION dbo.cron_decode
 (
         @cron VARCHAR(MAX),
         @format CHAR(10) = '2345671SUN',
@@ -59,7 +59,7 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                                 WHEN w.number IN (4, 6, 9, 11) THEN 30
                                                 ELSE 28 + ISDATE(CONCAT(y.number, '-02-29'))
                                         END AS myMonthDays
-                                FROM    dbo.cron_decode_expression_fn(cte.theMonth, 1, 12, 1, 1, 12) AS w
+                                FROM    dbo.decode_range_expression(cte.theMonth, 1, 12, 1, 1, 12) AS w
                         ) AS m
         CROSS APPLY     dbo.decode_range_expression(cte.theHour, 0, 23, 0, 0, 23) AS h
         CROSS APPLY     dbo.decode_range_expression(cte.theMinute, 0, 59, 0, 0, 59) AS n
@@ -75,7 +75,7 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                 SELECT          w.number
                                 FROM            (
                                                         SELECT  CHARINDEX(SUBSTRING(cte.theRollingWeek, w.number, 1), SUBSTRING(@format, 1, 7)) AS offset
-                                                        FROM    dbo.cron_decode_expression_fn(cte.theDayOfWeek, 0, 7, cte.theDefaultDayOfWeek, 1, 7) AS w
+                                                        FROM    dbo.decode_range_expression(cte.theDayOfWeek, 0, 7, cte.theDefaultDayOfWeek, 1, 7) AS w
                                                         WHERE   cte.theDayOfMonth = '?'
                                                                 AND cte.theDayOfWeek LIKE '%[-/,0123456789]%'
                                                                 AND cte.theDayOfWeek NOT LIKE '%[#L*]%'
