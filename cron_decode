@@ -159,7 +159,7 @@ RETURN  WITH cteCron(theSecond, theMinute, theHour, theDayOfMonth, theMonth, the
                                                 ) AS src
                                 CROSS APPLY     dbo.decode_range_expression('*', 7 * src.nth - 6, 7 * src.nth, 7 * src.nth - 6, 1, m.myMonthDays) AS w
                                 WHERE           1 + DATEDIFF(DAY, '19000101', DATEFROMPARTS(y.number, m.number, w.number)) % 7 = src.day_of_week
-                        ) AS d(number, yak)
+                        ) AS d(number)
         WHERE           cte.theSecond > ''
                         AND cte.theMinute > ''
                         AND cte.theHour > ''
